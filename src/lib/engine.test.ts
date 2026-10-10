@@ -231,7 +231,7 @@ describe('settleCompletedWeeks (surplus rollover)', () => {
   const afterWeekTwo = (extra: Parameters<typeof dataFor>[0] = {}): FinanceData =>
     dataFor({
       transactions: [tx('2026-10-09', 'groceries', 100), tx('2026-10-10', 'dining', 20), tx('2026-10-12', 'investments', 500)],
-      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-14', lastSettledThrough: '2026-10-07' },
+      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-14', lastSettledThrough: '2026-10-07', notificationLog: [] },
       ...extra,
     });
   const TODAY = d(2026, 10, 15);
@@ -285,7 +285,7 @@ describe('settleCompletedWeeks (surplus rollover)', () => {
     const data = afterWeekTwo({ preference: 'move-to-savings', vaultId: 'holiday', vaults: [vault('holiday', 100)] });
     const once = settleCompletedWeeks(data, TODAY);
     expect(settleCompletedWeeks(once, TODAY)).toBe(once);
-    const rewound = { ...once, meta: { ...once.meta, lastSettledThrough: '2026-10-07' } };
+    const rewound = { ...once, meta: { ...once.meta, lastSettledThrough: '2026-10-07', notificationLog: [] } };
     const again = settleCompletedWeeks(rewound, TODAY);
     expect(again.vaults[0]?.currentAmount).toBe(540);
     expect(again.rollovers).toHaveLength(2);
@@ -305,7 +305,7 @@ describe('settleCompletedWeeks (surplus rollover)', () => {
     const data = dataFor({
       preference: 'carry-forward',
       transactions: [],
-      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-07', lastSettledThrough: '2026-10-07' },
+      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-07', lastSettledThrough: '2026-10-07', notificationLog: [] },
     });
     const result = settleCompletedWeeks(data, d(2026, 10, 29)); // weeks 2, 3 and 4 have finished
     const needs = result.rollovers.filter((r) => r.bucket === 'needs').map((r) => r.amount);
@@ -319,7 +319,7 @@ describe('settleCompletedWeeks (surplus rollover)', () => {
     const data = dataFor({
       preference: 'carry-forward',
       transactions: [],
-      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-24', lastSettledThrough: '2026-10-21' },
+      meta: { billsMonth: '2026-10', lastAutoDeductDate: '2026-10-24', lastSettledThrough: '2026-10-21', notificationLog: [] },
     });
     const result = settleCompletedWeeks(data, d(2026, 11, 3));
     // Week 4 (Oct 22-28): 350. Stub week (Oct 29-31): 150 + 350 carried in = 500.

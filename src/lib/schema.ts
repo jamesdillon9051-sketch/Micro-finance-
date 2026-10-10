@@ -37,6 +37,8 @@ const MAX_MONEY = 1_000_000_000_000;
 const MAX_ID_LENGTH = 64;
 const MAX_TITLE_LENGTH = 100;
 const MAX_NOTE_LENGTH = 500;
+const MAX_LOG_ENTRIES = 1000;
+const MAX_LOG_KEY_LENGTH = 128;
 /** Reported errors are capped so a badly broken file doesn't produce thousands of lines. */
 const MAX_REPORTED_ERRORS = 25;
 
@@ -69,7 +71,7 @@ export function createDefaultFinanceData(now: Date): FinanceData {
 }
 
 function createDefaultMeta(now: Date): FinanceMeta {
-  return { billsMonth: toMonthKey(now), lastAutoDeductDate: null, lastSettledThrough: null };
+  return { billsMonth: toMonthKey(now), lastAutoDeductDate: null, lastSettledThrough: null, notificationLog: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +202,21 @@ function readOptionalDateKey(rec: Rec, key: string, path: string, errors: string
   return value;
 }
 
+/** A list of short strings that may be absent (older backups). */
+function readOptionalStringList(rec: Rec, key: string, path: string, errors: string[]): string[] {
+  const value = rec[key];
+  if (value === undefined) return [];
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_LOG_ENTRIES ||
+    !value.every((entry): entry is string => typeof entry === 'string' && entry.length > 0 && entry.length <= MAX_LOG_KEY_LENGTH)
+  ) {
+    errors.push(`${path}.${key} must be a list of at most ${MAX_LOG_ENTRIES} short strings`);
+    return [];
+  }
+  return [...value];
+}
+
 // ---------------------------------------------------------------------------
 // Entity readers
 // ---------------------------------------------------------------------------
@@ -282,6 +299,7 @@ export const readBill: Reader<BillReminder> = (value, path, errors) => {
     category: readEnum(rec, 'category', path, errors, EXPENSE_CATEGORIES, 'utilities'),
     isAutoDeduct: readBoolean(rec, 'isAutoDeduct', path, errors),
     notifiedThisMonth: readBoolean(rec, 'notifiedThisMonth', path, errors),
+    createdOn: readOptionalDateKey(rec, 'createdOn', path, errors),
   };
   return errors.length > start ? undefined : bill;
 };
@@ -329,11 +347,13 @@ const readMeta: Reader<FinanceMeta> = (value, path, errors) => {
   }
   const lastAutoDeductDate = readOptionalDateKey(rec, 'lastAutoDeductDate', path, errors);
   const lastSettledThrough = readOptionalDateKey(rec, 'lastSettledThrough', path, errors);
+  const notificationLog = readOptionalStringList(rec, 'notificationLog', path, errors);
   if (errors.length > start) return undefined;
   return {
     billsMonth: typeof billsMonth === 'string' ? billsMonth : '1970-01',
     lastAutoDeductDate,
     lastSettledThrough,
+    notificationLog,
   };
 };
 

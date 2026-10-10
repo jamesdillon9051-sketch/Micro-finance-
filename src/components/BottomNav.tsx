@@ -1,11 +1,13 @@
 import { ArrowLeftRight, CalendarClock, ChartPie, House, Vault, type LucideIcon } from 'lucide-react';
 import { cx } from './ui';
 
-export type Tab = 'home' | 'activity' | 'budget' | 'bills' | 'vaults';
+export type Tab = 'home' | 'ledger' | 'budget' | 'bills' | 'vaults';
+
+export const TABS_IN_ORDER: readonly Tab[] = ['home', 'ledger', 'budget', 'bills', 'vaults'];
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: LucideIcon }> = [
   { id: 'home', label: 'Home', icon: House },
-  { id: 'activity', label: 'Activity', icon: ArrowLeftRight },
+  { id: 'ledger', label: 'Ledger', icon: ArrowLeftRight },
   { id: 'budget', label: 'Budget', icon: ChartPie },
   { id: 'bills', label: 'Bills', icon: CalendarClock },
   { id: 'vaults', label: 'Vaults', icon: Vault },

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { getDueAutoDeductions, roundMoney } from '../lib/budget';
-import { fromDateKey, toDateKey, toMonthKey } from '../lib/dates';
+import { autoDeductTransactionId, getDueAutoDeductions, roundMoney } from '../lib/budget';
+import { addDays, fromDateKey, toDateKey, toMonthKey } from '../lib/dates';
 import { settleCompletedWeeks, summarizeBudget } from '../lib/engine';
 import {
   backupFileName,
@@ -35,6 +35,8 @@ export const STORAGE_KEY = 'micro-finance:state';
 const CORRUPT_BACKUP_SUFFIX = ':corrupt-backup';
 const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
 const MAINTENANCE_INTERVAL_MS = 60_000;
+/** How long delivered-notification keys are remembered. */
+const NOTIFICATION_LOG_DAYS = 62;
 
 /** The slice of the Web Storage API the store needs (so tests can inject a fake). */
 export interface StorageLike {
@@ -44,8 +46,14 @@ export interface StorageLike {
 
 export type NewTransaction = Omit<Transaction, 'id'>;
 export type TransactionPatch = Partial<Omit<Transaction, 'id'>>;
-export type NewBill = Omit<BillReminder, 'id'>;
-export type BillPatch = Partial<Omit<BillReminder, 'id'>>;
+export type NewBill = Omit<BillReminder, 'id' | 'createdOn'>;
+export type BillPatch = Partial<Omit<BillReminder, 'id' | 'createdOn'>>;
+
+/** An alert that was delivered; `billId` also marks that bill as notified for the month. */
+export interface NotificationReceipt {
+  key: string;
+  billId?: string | undefined;
+}
 export type NewVault = Omit<SavingsVault, 'id'>;
 export type VaultPatch = Partial<Omit<SavingsVault, 'id'>>;
 export type SalaryPatch = Partial<SalaryConfig>;
@@ -70,6 +78,12 @@ export interface FinanceActions {
   addBill(input: NewBill): Result<BillReminder>;
   updateBill(id: string, patch: BillPatch): Result<BillReminder>;
   deleteBill(id: string): boolean;
+  /**
+   * Records this month's payment of a bill as an expense dated today. Safe to call twice: the
+   * payment has a fixed id per bill and month, the same one auto-deducted bills use. To undo it,
+   * delete the returned transaction.
+   */
+  markBillPaid(id: string): Result<Transaction>;
 
   addVault(input: NewVault): Result<SavingsVault>;
   updateVault(id: string, patch: VaultPatch): Result<SavingsVault>;
@@ -79,6 +93,8 @@ export interface FinanceActions {
   deleteVault(id: string): boolean;
 
   updateNotifications(patch: NotificationPatch): Result<NotificationSettings>;
+  /** Remembers delivered alerts so they are never sent twice, and flags their bills as notified this month. */
+  recordNotificationsSent(receipts: readonly NotificationReceipt[]): void;
 
   /** The full state as a pretty-printed settings document (see `SettingsExport`). */
   exportToJson(): string;
@@ -283,14 +299,16 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
 
   // -- Generic add / update / delete for the three entity collections -------
 
-  function collection<T extends { id: string }>(
+  function collection<T extends { id: string }, N extends object = Omit<T, 'id'>>(
     select: (data: FinanceData) => T[],
     assign: (data: FinanceData, items: T[]) => FinanceData,
     parse: (value: unknown) => Result<T>,
+    /** Fills in fields the store owns (like `createdOn`) before the new item is validated. */
+    prepare: (input: N) => object = (input) => input,
   ) {
     return {
-      add(input: Omit<T, 'id'>): Result<T> {
-        const parsed = parse({ ...input, id: createId() });
+      add(input: N): Result<T> {
+        const parsed = parse({ ...prepare(input), id: createId() });
         if (!parsed.ok) return parsed;
         const data = snapshot.data;
         setData(assign(data, [...select(data), parsed.value]));
@@ -321,10 +339,11 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
     (data, items) => ({ ...data, transactions: items }),
     parseTransaction,
   );
-  const bills = collection(
+  const bills = collection<BillReminder, NewBill>(
     (data) => data.bills,
     (data, items) => ({ ...data, bills: items }),
     parseBill,
+    (input) => ({ ...input, createdOn: toDateKey(now()) }),
   );
   const vaults = collection(
     (data) => data.vaults,
@@ -375,6 +394,27 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
     addBill: bills.add,
     updateBill: bills.update,
     deleteBill: bills.remove,
+    markBillPaid(id) {
+      const data = snapshot.data;
+      const bill = data.bills.find((item) => item.id === id);
+      if (!bill) return notFound(id);
+      const today = now();
+      const paymentId = autoDeductTransactionId(bill.id, toMonthKey(today));
+      const existing = data.transactions.find((tx) => tx.id === paymentId);
+      if (existing) return { ok: true, value: existing };
+      const parsed = parseTransaction({
+        id: paymentId,
+        amount: bill.amount,
+        category: bill.category,
+        type: 'expense',
+        date: toDateKey(today),
+        note: `Paid: ${bill.title}`,
+        isRecurring: true,
+      });
+      if (!parsed.ok) return parsed;
+      setData({ ...data, transactions: [...data.transactions, parsed.value] });
+      return parsed;
+    },
 
     addVault: vaults.add,
     updateVault: vaults.update,
@@ -403,6 +443,24 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
       if (!parsed.ok) return parsed;
       setData({ ...snapshot.data, notifications: parsed.value });
       return parsed;
+    },
+
+    recordNotificationsSent(receipts) {
+      if (receipts.length === 0) return;
+      const data = snapshot.data;
+      const cutoff = toDateKey(addDays(now(), -NOTIFICATION_LOG_DAYS));
+      // Log keys begin with their date (YYYY-MM-DD), so old ones can be dropped by prefix.
+      const log = [...new Set([...data.meta.notificationLog, ...receipts.map((receipt) => receipt.key)])].filter(
+        (key) => key.slice(0, 10) >= cutoff,
+      );
+      const notifiedBills = new Set(receipts.flatMap((receipt) => (receipt.billId ? [receipt.billId] : [])));
+      setData({
+        ...data,
+        bills: notifiedBills.size
+          ? data.bills.map((bill) => (notifiedBills.has(bill.id) ? { ...bill, notifiedThisMonth: true } : bill))
+          : data.bills,
+        meta: { ...data.meta, notificationLog: log },
+      });
     },
 
     exportToJson,
@@ -480,6 +538,8 @@ export function getDefaultFinanceStore(): FinanceStore {
 }
 
 export interface FinanceState {
+  /** The complete saved state, for features that need all of it (notifications, export). */
+  data: FinanceData;
   salary: SalaryConfig;
   transactions: Transaction[];
   bills: BillReminder[];
@@ -538,6 +598,7 @@ export function useFinanceStore(store: FinanceStore = getDefaultFinanceStore()):
   );
 
   return {
+    data,
     salary,
     transactions,
     bills,

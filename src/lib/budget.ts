@@ -29,6 +29,11 @@ export function isExpenseCategory(value: string): value is ExpenseCategory {
   return Object.hasOwn(CATEGORY_BUCKET, value);
 }
 
+/** Needs and Wants expenses. Savings contributions are money set aside, not money spent. */
+export function isSpendingTransaction(tx: Transaction): tx is Transaction & { category: ExpenseCategory } {
+  return tx.type === 'expense' && isExpenseCategory(tx.category) && CATEGORY_BUCKET[tx.category] !== 'savings';
+}
+
 export function isIncomeCategory(value: string): value is IncomeCategory {
   return (INCOME_CATEGORIES as readonly string[]).includes(value);
 }

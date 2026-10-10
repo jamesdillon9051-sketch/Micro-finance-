@@ -48,6 +48,7 @@ describe('getDueAutoDeductions', () => {
     category: 'housing',
     isAutoDeduct: true,
     notifiedThisMonth: false,
+    createdOn: null,
     ...partial,
   });
   const none = new Set<string>();

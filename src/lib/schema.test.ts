@@ -28,6 +28,7 @@ const bill: BillReminder = {
   category: 'utilities',
   isAutoDeduct: true,
   notifiedThisMonth: false,
+  createdOn: null,
 };
 const vault: SavingsVault = {
   id: 'v1',
@@ -86,7 +87,12 @@ describe('settings document', () => {
     const data = JSON.parse(JSON.stringify(fullData())) as Record<string, unknown>;
     delete data['meta'];
     const result = parseSettingsExport(doc(data), NOW);
-    expect(result.ok && result.value.meta).toEqual({ billsMonth: '2026-10', lastAutoDeductDate: null, lastSettledThrough: null });
+    expect(result.ok && result.value.meta).toEqual({
+      billsMonth: '2026-10',
+      lastAutoDeductDate: null,
+      lastSettledThrough: null,
+      notificationLog: [],
+    });
   });
 
   it('requires every other section', () => {

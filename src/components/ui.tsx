@@ -112,7 +112,18 @@ export function IconButton({ icon: Icon, label, variant = 'glass', className, ty
 }
 
 /** Floating action button, kept above the tab bar and inside the phone-width column. */
-export function Fab({ label, icon: Icon, onClick }: { label: string; icon: LucideIcon; onClick: () => void }) {
+export function Fab({
+  label,
+  icon: Icon,
+  onClick,
+  shortcut,
+}: {
+  label: string;
+  icon: LucideIcon;
+  onClick: () => void;
+  /** Keyboard shortcut to show beside the label on devices with a keyboard, e.g. "Ctrl K". */
+  shortcut?: string | undefined;
+}) {
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-30 mx-auto flex max-w-md justify-end px-5">
       <button
@@ -127,6 +138,11 @@ export function Fab({ label, icon: Icon, onClick }: { label: string; icon: Lucid
       >
         <Icon className="h-5 w-5" aria-hidden />
         {label}
+        {shortcut && (
+          <kbd className="hidden rounded-md border border-white/25 bg-white/10 px-1.5 py-0.5 font-sans text-[11px] font-medium text-white/80 [@media(hover:hover)_and_(pointer:fine)]:inline">
+            {shortcut}
+          </kbd>
+        )}
       </button>
     </div>
   );

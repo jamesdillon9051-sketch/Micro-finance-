@@ -28,7 +28,8 @@ export function Sheet({ title, onClose, children }: SheetProps) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    panel.current?.focus();
+    // Move focus into the dialog, unless a field inside it (autoFocus) already took it.
+    if (panel.current && !panel.current.contains(document.activeElement)) panel.current.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
     };

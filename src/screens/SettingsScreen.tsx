@@ -2,12 +2,22 @@ import { ChevronLeft, CircleCheck, Download, RotateCcw, TriangleAlert, Upload } 
 import { useRef, useState, type ChangeEvent } from 'react';
 import { Field, INPUT_CLASS, MoneyInput, Switch } from '../components/forms';
 import { Banner, Button, GlassCard, IconButton, ScreenHeader } from '../components/ui';
+import { NotificationsCard } from '../components/NotificationsCard';
 import type { UseFinanceStoreResult } from '../hooks/useFinanceStore';
+import type { useNotifications } from '../hooks/useNotifications';
 import { parseAmount } from '../lib/format';
 
 type Notice = { accent: 'emerald' | 'rose'; text: string };
 
-export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreResult; onBack: () => void }) {
+export function SettingsScreen({
+  finance,
+  notifier,
+  onBack,
+}: {
+  finance: UseFinanceStoreResult;
+  notifier: ReturnType<typeof useNotifications>;
+  onBack: () => void;
+}) {
   const { notifications, storageError } = finance;
   const fileInput = useRef<HTMLInputElement>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -70,22 +80,24 @@ export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreRe
           </Banner>
         )}
 
-        <GlassCard>
+        <NotificationsCard notifier={notifier} />
+
+        <GlassCard delay={60}>
           <h2 className="text-lg font-semibold text-white">Alerts</h2>
           <p className="mt-1 text-sm leading-relaxed text-slate-400">
-            Alerts appear inside the app. Push notifications and timed reminders aren't sent yet.
+            Choose what to be told about. These also appear as banners inside the app.
           </p>
           <div className="mt-4 space-y-4 divide-y divide-white/5">
             <Switch
               label="Overspend alerts"
-              description="Warn me when a weekly limit is exceeded."
+              description="Warn me when my safe-to-spend falls below the level set below."
               checked={notifications.enableOverspendAlerts}
               onChange={(checked) => finance.updateNotifications({ enableOverspendAlerts: checked })}
             />
             <div className="pt-4">
               <Switch
                 label="Bill alerts"
-                description="Warn me when a bill is due within 3 days."
+                description="Remind me 2 days before a bill is due, and on the day."
                 checked={notifications.enableBillAlerts}
                 onChange={(checked) => finance.updateNotifications({ enableBillAlerts: checked })}
               />
@@ -93,7 +105,7 @@ export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreRe
             <div className="pt-4">
               <Switch
                 label="Daily reminder"
-                description="Remind me to log my spending."
+                description="An evening check-in to log what I spent."
                 checked={notifications.enableDailyReminder}
                 onChange={(checked) => finance.updateNotifications({ enableDailyReminder: checked })}
               />
@@ -101,7 +113,7 @@ export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreRe
           </div>
 
           <div className="mt-5 space-y-5">
-            <Field label="Reminder time">
+            <Field label="Evening reminder time">
               {(id) => (
                 <input
                   id={id}
@@ -114,15 +126,15 @@ export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreRe
               )}
             </Field>
             <Field
-              label="Running-low threshold"
-              hint="The safe-to-spend amount turns amber when your daily allowance drops below this."
+              label="Safe-to-spend alert level"
+              hint="You're warned when your daily safe-to-spend drops below this amount. Leave it at 0 to be warned only when you're over the week's limit."
             >
               {(id) => <MoneyInput id={id} value={threshold} onChange={setThreshold} onCommit={commitThreshold} />}
             </Field>
           </div>
         </GlassCard>
 
-        <GlassCard delay={60}>
+        <GlassCard delay={90}>
           <h2 className="text-lg font-semibold text-white">Backup &amp; restore</h2>
           <p className="mt-1 text-sm leading-relaxed text-slate-400">
             Everything is stored on this device only. Export a backup file to keep a copy or move to a new phone.
@@ -141,7 +153,7 @@ export function SettingsScreen({ finance, onBack }: { finance: UseFinanceStoreRe
           <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={handleImport} />
         </GlassCard>
 
-        <GlassCard delay={120}>
+        <GlassCard delay={150}>
           <h2 className="text-lg font-semibold text-white">Danger zone</h2>
           <div className="mt-4">
             <Button variant="danger" block icon={RotateCcw} onClick={reset}>

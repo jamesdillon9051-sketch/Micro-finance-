@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowUpRight, CalendarClock, CircleAlert, Plus, Settings, TriangleAlert, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, CalendarClock, CircleAlert, Settings, TriangleAlert, Wallet } from 'lucide-react';
 import { useState } from 'react';
 import { BucketRings, toRingData } from '../components/BucketRings';
 import { SafeToSpendCard } from '../components/budget/SafeToSpendCard';
@@ -6,7 +6,7 @@ import type { Tab } from '../components/BottomNav';
 import { BUCKET_META, categoryColor, categoryMeta } from '../components/meta';
 import { TransactionRow } from '../components/TransactionRow';
 import { TransactionSheet } from '../components/TransactionSheet';
-import { Banner, Fab, GlassCard, IconButton, IconTile, Label, Money, ScreenHeader, SectionTitle } from '../components/ui';
+import { Banner, GlassCard, IconButton, IconTile, Label, Money, ScreenHeader, SectionTitle } from '../components/ui';
 import type { UseFinanceStoreResult } from '../hooks/useFinanceStore';
 import { sortNewestFirst } from '../lib/budget';
 import { diffInDays, fromDateKey, nextOccurrence } from '../lib/dates';
@@ -25,7 +25,7 @@ const DUE_SOON_DAYS = 3;
 
 export function HomeScreen({ finance, goTo, openSettings }: Props) {
   const { overview, salary, notifications, bills, transactions, today, storageError } = finance;
-  const [sheet, setSheet] = useState<{ editing?: Transaction } | null>(null);
+  const [editing, setEditing] = useState<Transaction | null>(null);
   const todayDate = fromDateKey(today);
   const configured = salary.monthlySalary > 0;
 
@@ -174,7 +174,7 @@ export function HomeScreen({ finance, goTo, openSettings }: Props) {
           <SectionTitle
             action={
               recent.length > 0 ? (
-                <button type="button" onClick={() => goTo('activity')} className="text-sm font-medium text-indigo-300 hover:text-indigo-200">
+                <button type="button" onClick={() => goTo('ledger')} className="text-sm font-medium text-indigo-300 hover:text-indigo-200">
                   See all
                 </button>
               ) : undefined
@@ -185,13 +185,13 @@ export function HomeScreen({ finance, goTo, openSettings }: Props) {
           {recent.length === 0 ? (
             <div className="flex flex-col items-center py-8 text-center">
               <Wallet className="mb-3 h-8 w-8 text-slate-500" aria-hidden />
-              <p className="text-sm text-slate-400">Nothing yet. Tap Add to record your first transaction.</p>
+              <p className="text-sm text-slate-400">Nothing yet. Tap Log to record your first expense.</p>
             </div>
           ) : (
             <ul className="mt-2 divide-y divide-white/5">
               {recent.map((transaction) => (
                 <li key={transaction.id}>
-                  <TransactionRow transaction={transaction} onSelect={(tx) => setSheet({ editing: tx })} />
+                  <TransactionRow transaction={transaction} onSelect={setEditing} />
                 </li>
               ))}
             </ul>
@@ -199,8 +199,7 @@ export function HomeScreen({ finance, goTo, openSettings }: Props) {
         </GlassCard>
       </div>
 
-      <Fab label="Add" icon={Plus} onClick={() => setSheet({})} />
-      {sheet && <TransactionSheet finance={finance} editing={sheet.editing} onClose={() => setSheet(null)} />}
+      {editing && <TransactionSheet finance={finance} editing={editing} onClose={() => setEditing(null)} />}
     </>
   );
 }

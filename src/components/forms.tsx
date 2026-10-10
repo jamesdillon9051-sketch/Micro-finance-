@@ -1,4 +1,4 @@
-import { useId, type ChangeEvent, type CSSProperties, type InputHTMLAttributes, type ReactNode } from 'react';
+import { useId, type ChangeEvent, type CSSProperties, type InputHTMLAttributes, type ReactNode, type Ref } from 'react';
 import { sanitizeAmountInput } from '../lib/format';
 import {
   BUCKET_KEYS,
@@ -52,6 +52,8 @@ interface MoneyInputProps {
   placeholder?: string;
   disabled?: boolean | undefined;
   label?: string | undefined;
+  autoFocus?: boolean | undefined;
+  inputRef?: Ref<HTMLInputElement> | undefined;
 }
 
 export function MoneyInput({
@@ -63,6 +65,8 @@ export function MoneyInput({
   placeholder = '0.00',
   disabled,
   label,
+  autoFocus,
+  inputRef,
 }: MoneyInputProps) {
   const hero = variant === 'hero';
   return (
@@ -77,9 +81,11 @@ export function MoneyInput({
         $
       </span>
       <input
+        ref={inputRef}
         id={id}
         type="text"
         inputMode="decimal"
+        autoFocus={autoFocus}
         autoComplete="off"
         aria-label={label}
         value={value}

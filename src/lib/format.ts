@@ -60,11 +60,12 @@ export function formatMonthYear(date: DateKey): string {
   return monthYearFormat.format(fromDateKey(date));
 }
 
-/** `Today`, `Tomorrow`, `In 5 days`. */
+/** `Today`, `Tomorrow`, `In 5 days`, and for a missed date `1 day overdue` / `3 days overdue`. */
 export function formatDueInDays(days: number): string {
-  if (days <= 0) return 'Today';
+  if (days === 0) return 'Today';
   if (days === 1) return 'Tomorrow';
-  return `In ${days} days`;
+  if (days > 1) return `In ${days} days`;
+  return `${-days} ${days === -1 ? 'day' : 'days'} overdue`;
 }
 
 /** 1 -> `1st`, 22 -> `22nd`, 13 -> `13th`. */
@@ -98,4 +99,21 @@ export function sanitizeAmountInput(text: string): string {
   const dot = cleaned.indexOf('.');
   if (dot === -1) return cleaned;
   return `${cleaned.slice(0, dot)}.${cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2)}`;
+}
+
+const weekdayFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'short' });
+
+/** Two short lines for a table cell: `Oct 9` over `Fri` (or over the year, for earlier years). */
+export function formatLedgerDate(date: DateKey, today: DateKey): { primary: string; secondary: string } {
+  const target = fromDateKey(date);
+  const sameYear = target.getFullYear() === fromDateKey(today).getFullYear();
+  return {
+    primary: shortFormat.format(target),
+    secondary: sameYear ? weekdayFormat.format(target) : String(target.getFullYear()),
+  };
+}
+
+/** `October 2026` */
+export function formatMonthName(year: number, monthIndex: number): string {
+  return new Intl.DateTimeFormat(LOCALE, { month: 'long', year: 'numeric' }).format(new Date(year, monthIndex, 1));
 }

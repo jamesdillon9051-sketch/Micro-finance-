@@ -142,6 +142,11 @@ export interface BillReminder {
   isAutoDeduct: boolean;
   /** Whether the user has already been alerted about this bill in the current calendar month. Reset automatically each month. */
   notifiedThisMonth: boolean;
+  /**
+   * The day the bill was added. Due dates before it are not tracked, so a bill added on the 20th
+   * isn't "overdue" for the 15th. `null` (older data) means every due date is tracked.
+   */
+  createdOn: DateKey | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +224,11 @@ export interface FinanceMeta {
   lastAutoDeductDate: DateKey | null;
   /** Every week ending on or before this day has had its surplus settled; `null` if never run. */
   lastSettledThrough: DateKey | null;
+  /**
+   * Notifications already sent, as `YYYY-MM-DD|kind[|id]` keys, so an alert never repeats.
+   * Entries older than about two months are dropped.
+   */
+  notificationLog: string[];
 }
 
 /** Everything the app persists. */

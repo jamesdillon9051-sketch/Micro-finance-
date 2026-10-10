@@ -63,7 +63,7 @@ export const EXPENSE_META: Record<ExpenseCategory, CategoryMeta> = {
   debt: { label: 'Debt', icon: CreditCard },
   education: { label: 'Education', icon: GraduationCap },
   dining: { label: 'Dining', icon: UtensilsCrossed },
-  entertainment: { label: 'Fun', icon: Clapperboard },
+  entertainment: { label: 'Entertainment', icon: Clapperboard },
   shopping: { label: 'Shopping', icon: ShoppingBag },
   subscriptions: { label: 'Subscriptions', icon: Repeat },
   travel: { label: 'Travel', icon: Plane },

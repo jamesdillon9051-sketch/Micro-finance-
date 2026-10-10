@@ -20,7 +20,11 @@ npm run build
 | `src/lib/engine.ts` | The budget engine (pure): salary split, weekly caps, safe-to-spend, surplus rollover. |
 | `src/lib/budget.ts`, `dates.ts`, `format.ts` | Pay periods and auto-deduct bills; local-time date maths; currency/date formatting. |
 | `src/lib/schema.ts` | Runtime validation of every entity and of whole settings files. |
-| `src/components/`, `src/screens/` | The mobile UI: design-system primitives (`ui.tsx`, `forms.tsx`, `Sheet.tsx`), five tab screens and a settings screen. |
+| `src/lib/bills.ts`, `ledger.ts`, `analytics.ts`, `notify.ts` | Pure, tested logic: bill status and the calendar grid, ledger search and filters, the three chart series, and which notifications are due. |
+| `src/lib/notifier.ts`, `pwa.ts`, `platform.ts` | Browser glue: Notifications API (via the service worker), service-worker registration, iOS / install detection. |
+| `src/hooks/useNotifications.ts`, `useInstallPrompt.ts`, `useOnlineStatus.ts` | Deliver due alerts, offer installation, track connectivity. |
+| `src/components/`, `src/screens/` | The mobile UI: design-system primitives (`ui.tsx`, `forms.tsx`, `Sheet.tsx`, `toast.tsx`), five tab screens (Home, Ledger, Budget with Limits and Insights, Bills, Vaults) and Settings. |
+| `public/manifest.json`, `public/sw.js`, `public/icons/` | PWA manifest, service worker and icons. |
 
 State is shared by every component that calls `useFinanceStore()`; no provider is needed. Every action validates its input and returns `{ ok, value }` or `{ ok: false, errors }`.
 
@@ -48,4 +52,21 @@ State is shared by every component that calls `useFinanceStore()`; no provider i
 * Unreadable saved data (corrupt, or written by a newer app version) is copied to `micro-finance:state:corrupt-backup` before the app starts fresh, and `storageError` explains what happened.
 * Export produces the same document (`schema: "micro-finance.settings"`, `schemaVersion: 1`). Import is all-or-nothing: the file is fully validated first, and an invalid file changes nothing. Backups made before weekly rollover existed still import.
 
-Not built yet: a web manifest, service worker and app icons (so it isn't installable yet), and push notifications. The alert toggles currently drive in-app banners only.
+## Daily use
+
+* **Quick expense.** The floating **Log** button (on every screen) or **Cmd/Ctrl + K** opens a one-field logger: type an amount, tap a category chip, press Enter. Your most-used categories come first, and a toast offers **Undo**. Income and the full set of options live in the Ledger's **+** form.
+* **Ledger.** A searchable table with type, date-range (this period, 7 / 30 days, custom) and category filters, running totals for what is shown, and category badges.
+* **Bills.** A month calendar plus a list. Each bill is **Overdue**, **Due today**, **Upcoming** or **Paid**; each can be set to auto-deduct, or marked paid by hand. A bill counts as paid for a month when its payment transaction exists (auto-deducted and hand-marked payments share one id per bill and month), and a bill isn't called overdue for dates before it was added.
+* **Insights** (Budget > Insights). Spending by category (donut; the 4 biggest plus Other), cumulative burn rate against the budget limit and an even pace, and net savings by month. Every chart has its numbers in a table.
+
+## Install, offline and notifications
+
+* **Install.** On iPhone: Safari > Share > **Add to Home Screen**, then open it from the Home Screen. Settings walks through this. On Android/desktop Chromium there is an **Install app** button.
+* **Offline.** The service worker caches the app shell and every built asset when it first installs, so the app opens with no connection. All data is in `localStorage` on the device. Each release gets its own cache (stamped by `vite.config.ts`), and an in-app notice offers a reload when an update has taken over.
+* **Notifications** (Settings > Phone notifications). Bills due in 2 days and on the day, a warning when safe-to-spend falls below your alert level, and an evening check-in at your chosen time. Each is sent once (a log of sent keys is kept in the saved data). iPhone only allows notifications after the app is on the Home Screen (iOS 16.4+), and the permission request must come from a tap.
+
+**What notifications cannot do.** They are checked by the app itself: on launch, on returning to the app, every minute while it runs, and when your data changes. A web app can't run code once a phone has suspended it, so a reminder for a time the app wasn't running arrives the next time it is opened. Reliable delivery to a closed phone needs a push server (Web Push), which this local-only app deliberately doesn't have.
+
+### Deploying
+
+Serve `sw.js` with `Cache-Control: no-cache` (and everything under `/assets/` as immutable) so browsers pick up new releases. HTTPS is required for service workers and notifications. To change the icon, edit `public/icon.svg` and run `node scripts/generate-icons.mjs` (needs Playwright; see the script header).

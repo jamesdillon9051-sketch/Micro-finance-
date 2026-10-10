@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { VAULT_ICON_COMPONENTS } from '../components/meta';
 import { ProgressRing } from '../components/ProgressRing';
 import { AdjustVaultSheet, VaultSheet } from '../components/VaultSheets';
-import { Button, Chip, EmptyState, Fab, GlassCard, IconButton, Label, Money, ProgressBar, ScreenHeader } from '../components/ui';
+import { Button, Chip, EmptyState, GlassCard, IconButton, Label, Money, ProgressBar, ScreenHeader } from '../components/ui';
 import type { UseFinanceStoreResult } from '../hooks/useFinanceStore';
 import { roundMoney } from '../lib/budget';
 import { diffInDays, fromDateKey } from '../lib/dates';
@@ -25,7 +25,11 @@ export function VaultsScreen({ finance }: { finance: UseFinanceStoreResult }) {
 
   return (
     <>
-      <ScreenHeader title="Vaults" subtitle={`${vaults.length} ${vaults.length === 1 ? 'goal' : 'goals'}`} />
+      <ScreenHeader
+        title="Vaults"
+        subtitle={`${vaults.length} ${vaults.length === 1 ? 'goal' : 'goals'}`}
+        trailing={<IconButton icon={Plus} label="New vault" variant="primary" onClick={() => setSheet({ kind: 'edit' })} />}
+      />
       <div className="space-y-4 px-4 pt-4">
         {vaults.length === 0 ? (
           <EmptyState
@@ -114,7 +118,6 @@ export function VaultsScreen({ finance }: { finance: UseFinanceStoreResult }) {
         )}
       </div>
 
-      <Fab label="New vault" icon={Plus} onClick={() => setSheet({ kind: 'edit' })} />
       {sheet?.kind === 'edit' && <VaultSheet finance={finance} editing={sheet.vault} onClose={() => setSheet(null)} />}
       {sheet?.kind === 'adjust' && (
         <AdjustVaultSheet finance={finance} vault={sheet.vault} initialMode={sheet.mode} onClose={() => setSheet(null)} />
