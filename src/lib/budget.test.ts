@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { BillReminder, Transaction } from '../types';
-import { getBudgetPeriod, getDueAutoDeductions, summarizeBudget } from './budget';
-import { createDefaultFinanceData } from './schema';
+import type { BillReminder } from '../types';
+import { getBudgetPeriod, getDueAutoDeductions, sortNewestFirst } from './budget';
 
 const d = (y: number, m: number, day: number) => new Date(y, m - 1, day, 15, 30);
 
@@ -37,62 +36,6 @@ describe('getBudgetPeriod', () => {
   it('clamps a payday of 31 to short months', () => {
     expect(getBudgetPeriod(31, d(2027, 2, 15))).toMatchObject({ startDate: '2027-01-31', endDate: '2027-02-27' });
     expect(getBudgetPeriod(31, d(2027, 2, 28))).toMatchObject({ startDate: '2027-02-28', endDate: '2027-03-30' });
-  });
-});
-
-describe('summarizeBudget', () => {
-  const base = createDefaultFinanceData(d(2026, 10, 10));
-  const salary = { ...base.salary, monthlySalary: 3000, paydayDate: 1 };
-  const tx = (partial: Partial<Transaction>): Transaction => ({
-    id: Math.random().toString(),
-    amount: 100,
-    category: 'groceries',
-    type: 'expense',
-    date: '2026-10-05',
-    note: '',
-    isRecurring: false,
-    ...partial,
-  });
-
-  it('allocates by percentage and counts only expenses inside the period', () => {
-    const overview = summarizeBudget(
-      {
-        salary,
-        transactions: [
-          tx({ amount: 400, category: 'housing' }),
-          tx({ amount: 150.5, category: 'dining' }),
-          tx({ amount: 200, category: 'investments' }),
-          tx({ amount: 999, category: 'dining', date: '2026-09-30' }), // before period
-          tx({ amount: 999, category: 'dining', date: '2026-11-01' }), // after period
-          tx({ amount: 3000, type: 'income', category: 'salary' }), // income is not spending
-        ],
-      },
-      d(2026, 10, 10),
-    );
-
-    expect(overview.buckets.needs).toMatchObject({ allocated: 1500, spent: 400, remaining: 1100 });
-    expect(overview.buckets.wants).toMatchObject({ allocated: 900, spent: 150.5, remaining: 749.5 });
-    expect(overview.buckets.savings).toMatchObject({ allocated: 600, spent: 200, remaining: 400 });
-    expect(overview.periodIncome).toBe(3000);
-    expect(overview.periodExpenses).toBe(750.5);
-    // (1100 + 749.5) over the 22 days left (Oct 10..31)
-    expect(overview.safeToSpend).toEqual({ remaining: 1849.5, perDay: 84.07 });
-  });
-
-  it('goes negative when overspent and never divides by zero', () => {
-    const overview = summarizeBudget(
-      { salary: { ...salary, monthlySalary: 100 }, transactions: [tx({ amount: 90, category: 'dining' })] },
-      d(2026, 10, 31), // last day of the period: 1 day left
-    );
-    expect(overview.buckets.wants).toMatchObject({ allocated: 30, spent: 90, remaining: -60 });
-    expect(overview.buckets.wants.percentUsed).toBe(300);
-    // needs +50, wants -60
-    expect(overview.safeToSpend).toEqual({ remaining: -10, perDay: -10 });
-  });
-
-  it('reports 0% used when nothing is allocated or spent', () => {
-    const overview = summarizeBudget({ salary: base.salary, transactions: [] }, d(2026, 10, 10));
-    expect(overview.buckets.needs.percentUsed).toBe(0);
   });
 });
 
@@ -142,5 +85,28 @@ describe('getDueAutoDeductions', () => {
   it('moves a day-31 bill to the last day of short months', () => {
     const due = getDueAutoDeductions([bill({ dueDate: 31 })], none, '2027-01-31', '2027-03-05');
     expect(due.map((t) => t.date)).toEqual(['2027-02-28']);
+  });
+});
+
+describe('sortNewestFirst', () => {
+  const tx = (id: string, date: string) => ({
+    id,
+    amount: 1,
+    category: 'groceries' as const,
+    type: 'expense' as const,
+    date,
+    note: '',
+    isRecurring: false,
+  });
+
+  it('orders by date, keeping the most recently added first within a day', () => {
+    const sorted = sortNewestFirst([tx('a', '2026-10-01'), tx('b', '2026-10-03'), tx('c', '2026-10-03'), tx('d', '2026-09-30')]);
+    expect(sorted.map((t) => t.id)).toEqual(['c', 'b', 'a', 'd']);
+  });
+
+  it('does not mutate its input', () => {
+    const input = [tx('a', '2026-10-01'), tx('b', '2026-10-02')];
+    sortNewestFirst(input);
+    expect(input.map((t) => t.id)).toEqual(['a', 'b']);
   });
 });

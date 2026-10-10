@@ -28,6 +28,10 @@ export type TimeOfDay = string;
 export const BUCKET_KEYS = ['needs', 'wants', 'savings'] as const;
 export type BucketKey = (typeof BUCKET_KEYS)[number];
 
+/** The buckets money is spent from. Savings is a target to hit, not a limit to stay under. */
+export const SPENDING_BUCKETS = ['needs', 'wants'] as const;
+export type SpendingBucket = (typeof SPENDING_BUCKETS)[number];
+
 /** Percentage (0-100) of each pay period's salary given to every bucket. Must total 100. */
 export interface BucketAllocation {
   needs: number;
@@ -86,10 +90,11 @@ export type TransactionType = 'income' | 'expense';
 // ---------------------------------------------------------------------------
 
 /**
- * What happens to money left in a bucket when a pay period ends.
- *  - `none`            each period starts fresh.
- *  - `carry-forward`   unspent Needs/Wants/Savings stays in the same bucket.
- *  - `move-to-savings` unspent Needs/Wants is moved into the Savings bucket.
+ * What happens to the unspent part of a week's Needs / Wants cap when the week ends.
+ *  - `none`            the surplus lapses; every week starts from its base cap.
+ *  - `carry-forward`   the surplus is added to the next week's cap for the same bucket.
+ *  - `move-to-savings` the surplus is moved into the vault chosen in `rolloverVaultId`.
+ * Overspending is never carried over as debt.
  */
 export const ROLLOVER_PREFERENCES = ['none', 'carry-forward', 'move-to-savings'] as const;
 export type RolloverPreference = (typeof ROLLOVER_PREFERENCES)[number];
@@ -102,6 +107,8 @@ export interface SalaryConfig {
   /** How each pay period's salary is split across Needs / Wants / Savings (percent). */
   allocation: BucketAllocation;
   rolloverPreference: RolloverPreference;
+  /** Vault that receives weekly surplus when the preference is `move-to-savings`; `null` if none chosen. */
+  rolloverVaultId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,12 +190,35 @@ export interface NotificationSettings {
 // Aggregate state & settings schema (persistence / export / import)
 // ---------------------------------------------------------------------------
 
+/**
+ * A weekly surplus that was acted on. The ledger makes settlement idempotent
+ * (one record per week + bucket) and freezes what actually happened, so later
+ * edits to salary, allocation or old transactions don't rewrite history.
+ */
+export interface RolloverRecord {
+  /** `${weekStart}:${bucket}` - unique per week and bucket. */
+  id: string;
+  /** First and last day of the week that produced the surplus. */
+  weekStart: DateKey;
+  weekEnd: DateKey;
+  bucket: SpendingBucket;
+  /** The unspent amount, always positive. */
+  amount: number;
+  /** `carried` raised the following week's cap; `moved` was added to a vault. */
+  action: 'carried' | 'moved';
+  /** The vault credited when `action` is `moved`, otherwise `null`. */
+  vaultId: string | null;
+  settledOn: DateKey;
+}
+
 /** Bookkeeping the store needs to run its once-a-month / once-a-day jobs exactly once. */
 export interface FinanceMeta {
   /** Month for which `BillReminder.notifiedThisMonth` flags are valid. */
   billsMonth: MonthKey;
   /** Last day auto-deduct bills were processed up to; `null` if never. */
   lastAutoDeductDate: DateKey | null;
+  /** Every week ending on or before this day has had its surplus settled; `null` if never run. */
+  lastSettledThrough: DateKey | null;
 }
 
 /** Everything the app persists. */
@@ -198,6 +228,7 @@ export interface FinanceData {
   bills: BillReminder[];
   vaults: SavingsVault[];
   notifications: NotificationSettings;
+  rollovers: RolloverRecord[];
   meta: FinanceMeta;
 }
 
@@ -251,14 +282,61 @@ export interface BucketSummary {
   percentUsed: number;
 }
 
+/** One run of up to 7 days inside a pay period. The last week of a period may be shorter. */
+export interface WeekWindow {
+  /** 0-based position in the pay period. */
+  index: number;
+  start: DateKey;
+  /** Last day of the week (inclusive). */
+  end: DateKey;
+  days: number;
+}
+
+export interface WeeklyBucket {
+  bucket: BucketKey;
+  /** This week's share of the bucket's monthly allocation. */
+  baseCap: number;
+  /** Surplus carried in from the previous week (Needs / Wants only). */
+  carriedIn: number;
+  /** `baseCap + carriedIn`: the strict limit for the week (for Savings, the amount to put aside). */
+  cap: number;
+  /** Spent this week; for Savings, what was saved this week. */
+  spent: number;
+  /** `cap - spent`; negative when over. */
+  remaining: number;
+  /** `spent / cap * 100`, not capped. */
+  percentUsed: number;
+  /** `remaining` spread over the days left this week, today included. */
+  perDay: number;
+}
+
+export interface WeeklyBudget {
+  week: WeekWindow;
+  /** 1-based number of the current week within the period. */
+  weekNumber: number;
+  weeksInPeriod: number;
+  /** Days left in the week, today included. */
+  daysRemaining: number;
+  buckets: Record<BucketKey, WeeklyBucket>;
+  /** Needs + Wants together: everything that can be spent this week. */
+  spendable: { cap: number; spent: number; remaining: number };
+}
+
 export interface BudgetOverview {
   period: BudgetPeriod;
+  /** Whole-period totals per bucket. */
   buckets: Record<BucketKey, BucketSummary>;
   periodIncome: number;
   periodExpenses: number;
-  /** Discretionary headroom: what's left in Needs + Wants, in total and spread over the days remaining. */
+  weekly: WeeklyBudget;
+  /**
+   * Today's allowance: what is left of this week's Needs + Wants budget divided
+   * by the days left this week (today included). It shrinks as you spend today.
+   */
   safeToSpend: {
+    /** Left of this week's Needs + Wants budget. */
     remaining: number;
+    daysRemaining: number;
     perDay: number;
   };
 }

@@ -4,6 +4,7 @@ import {
   INCOME_CATEGORIES,
   ROLLOVER_PREFERENCES,
   SETTINGS_SCHEMA_ID,
+  SPENDING_BUCKETS,
   SETTINGS_SCHEMA_VERSION,
   VAULT_ICONS,
   type BillReminder,
@@ -13,6 +14,7 @@ import {
   type FinanceMeta,
   type NotificationSettings,
   type Result,
+  type RolloverRecord,
   type SalaryConfig,
   type SavingsVault,
   type SettingsExport,
@@ -49,6 +51,7 @@ export function createDefaultFinanceData(now: Date): FinanceData {
       paydayDate: 1,
       allocation: { needs: 50, wants: 30, savings: 20 },
       rolloverPreference: 'none',
+      rolloverVaultId: null,
     },
     transactions: [],
     bills: [],
@@ -60,12 +63,13 @@ export function createDefaultFinanceData(now: Date): FinanceData {
       enableOverspendAlerts: true,
       safeToSpendThreshold: 0,
     },
+    rollovers: [],
     meta: createDefaultMeta(now),
   };
 }
 
 function createDefaultMeta(now: Date): FinanceMeta {
-  return { billsMonth: toMonthKey(now), lastAutoDeductDate: null };
+  return { billsMonth: toMonthKey(now), lastAutoDeductDate: null, lastSettledThrough: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +178,28 @@ function readDateKey(rec: Rec, key: string, path: string, errors: string[]): Dat
   return value;
 }
 
+/** An id that may be absent or `null` (both mean "none"). Older backups predate some of these fields. */
+function readOptionalId(rec: Rec, key: string, path: string, errors: string[]): string | null {
+  const value = rec[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_ID_LENGTH) {
+    errors.push(`${path}.${key} must be an id or null`);
+    return null;
+  }
+  return value;
+}
+
+/** A date that may be absent or `null`. */
+function readOptionalDateKey(rec: Rec, key: string, path: string, errors: string[]): DateKey | null {
+  const value = rec[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !isValidDateKey(value)) {
+    errors.push(`${path}.${key} must be null or a date formatted YYYY-MM-DD`);
+    return null;
+  }
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // Entity readers
 // ---------------------------------------------------------------------------
@@ -213,8 +239,9 @@ export const readSalaryConfig: Reader<SalaryConfig> = (value, path, errors) => {
     ROLLOVER_PREFERENCES,
     'none',
   );
+  const rolloverVaultId = readOptionalId(rec, 'rolloverVaultId', path, errors);
   if (errors.length > start || !allocation) return undefined;
-  return { monthlySalary, paydayDate, allocation, rolloverPreference };
+  return { monthlySalary, paydayDate, allocation, rolloverPreference, rolloverVaultId };
 };
 
 export const readTransaction: Reader<Transaction> = (value, path, errors) => {
@@ -300,15 +327,40 @@ const readMeta: Reader<FinanceMeta> = (value, path, errors) => {
   if (typeof billsMonth !== 'string' || !isValidMonthKey(billsMonth)) {
     errors.push(`${path}.billsMonth must be a month formatted YYYY-MM`);
   }
-  const last = rec['lastAutoDeductDate'];
-  if (last !== null && (typeof last !== 'string' || !isValidDateKey(last))) {
-    errors.push(`${path}.lastAutoDeductDate must be null or a date formatted YYYY-MM-DD`);
-  }
+  const lastAutoDeductDate = readOptionalDateKey(rec, 'lastAutoDeductDate', path, errors);
+  const lastSettledThrough = readOptionalDateKey(rec, 'lastSettledThrough', path, errors);
   if (errors.length > start) return undefined;
   return {
     billsMonth: typeof billsMonth === 'string' ? billsMonth : '1970-01',
-    lastAutoDeductDate: typeof last === 'string' ? last : null,
+    lastAutoDeductDate,
+    lastSettledThrough,
   };
+};
+
+export const readRolloverRecord: Reader<RolloverRecord> = (value, path, errors) => {
+  const rec = readRecord(value, path, errors);
+  if (!rec) return undefined;
+  const start = errors.length;
+  const record: RolloverRecord = {
+    id: readString(rec, 'id', path, errors, MAX_ID_LENGTH, true),
+    weekStart: readDateKey(rec, 'weekStart', path, errors),
+    weekEnd: readDateKey(rec, 'weekEnd', path, errors),
+    bucket: readEnum(rec, 'bucket', path, errors, SPENDING_BUCKETS, 'needs'),
+    amount: readMoney(rec, 'amount', path, errors, true),
+    action: readEnum(rec, 'action', path, errors, ['carried', 'moved'] as const, 'carried'),
+    vaultId: readOptionalId(rec, 'vaultId', path, errors),
+    settledOn: readDateKey(rec, 'settledOn', path, errors),
+  };
+  if (errors.length > start) return undefined;
+  if (record.weekEnd < record.weekStart) {
+    errors.push(`${path}.weekEnd must not be before weekStart`);
+    return undefined;
+  }
+  if (record.action === 'moved' && record.vaultId === null) {
+    errors.push(`${path}.vaultId is required when action is "moved"`);
+    return undefined;
+  }
+  return record;
 };
 
 /** Reads an array of entities, collecting every problem and rejecting duplicate ids. */
@@ -400,11 +452,18 @@ export function parseSettingsExport(input: unknown, now: Date): Result<FinanceDa
   const bills = readEntityList(data['bills'], 'data.bills', errors, readBill);
   const vaults = readEntityList(data['vaults'], 'data.vaults', errors, readVault);
   const notifications = readNotificationSettings(data['notifications'], 'data.notifications', errors);
+  const rollovers =
+    data['rollovers'] === undefined
+      ? []
+      : readEntityList(data['rollovers'], 'data.rollovers', errors, readRolloverRecord);
   const meta =
     data['meta'] === undefined ? createDefaultMeta(now) : readMeta(data['meta'], 'data.meta', errors);
 
   if (errors.length > 0 || !salary || !notifications || !meta) return finish<FinanceData>(undefined, errors);
-  return { ok: true, value: { salary, transactions, bills, vaults, notifications, meta } };
+  if (salary.rolloverVaultId !== null && !vaults.some((vault) => vault.id === salary.rolloverVaultId)) {
+    return finish<FinanceData>(undefined, ['data.salary.rolloverVaultId refers to a vault that is not in the backup']);
+  }
+  return { ok: true, value: { salary, transactions, bills, vaults, notifications, rollovers, meta } };
 }
 
 /** Parses the text of a settings file / stored record. Never throws. */

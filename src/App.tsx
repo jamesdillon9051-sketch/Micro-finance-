@@ -1,152 +1,62 @@
-import { Download, RotateCcw, TriangleAlert, Upload, Wallet } from 'lucide-react';
-import { useRef, useState, type ChangeEvent } from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import { useFinanceStore } from './hooks/useFinanceStore';
-import { BUCKET_KEYS, type BucketKey } from './types';
+import { useEffect, useState } from 'react';
+import { BottomNav, type Tab } from './components/BottomNav';
+import { cx } from './components/ui';
+import { useFinanceStore, type FinanceStore } from './hooks/useFinanceStore';
+import { ActivityScreen } from './screens/ActivityScreen';
+import { BillsScreen } from './screens/BillsScreen';
+import { BudgetScreen } from './screens/BudgetScreen';
+import { HomeScreen } from './screens/HomeScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
+import { VaultsScreen } from './screens/VaultsScreen';
 
-const BUCKET_STYLE: Record<BucketKey, { label: string; color: string }> = {
-  needs: { label: 'Needs', color: '#0ea5e9' },
-  wants: { label: 'Wants', color: '#f59e0b' },
-  savings: { label: 'Savings', color: '#10b981' },
-};
+type Route = Tab | 'settings';
 
-const formatMoney = (value: number): string =>
-  value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Screens with a floating "add" button need extra room so it never covers the last item. */
+const HAS_FAB: ReadonlySet<Route> = new Set<Route>(['home', 'activity', 'bills', 'vaults']);
 
-/**
- * Minimal shell that exercises the whole stack (Tailwind, Lucide, Recharts and
- * the finance store). Replace it with the real screens.
- */
-export default function App() {
-  const store = useFinanceStore();
-  const { salary, overview, storageError } = store;
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [message, setMessage] = useState<string | null>(null);
+/** Soft colour wash behind everything, so the frosted cards have something to blur. */
+function AmbientGlow() {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden bg-black">
+      <div className="absolute -left-1/4 -top-32 h-[28rem] w-[28rem] rounded-full bg-indigo-600/25 blur-[100px]" />
+      <div className="absolute -right-1/4 top-1/3 h-[24rem] w-[24rem] rounded-full bg-emerald-500/15 blur-[100px]" />
+      <div className="absolute -bottom-32 left-1/4 h-[26rem] w-[26rem] rounded-full bg-violet-600/20 blur-[100px]" />
+    </div>
+  );
+}
 
-  const chartData = BUCKET_KEYS.map((key) => ({
-    key,
-    name: BUCKET_STYLE[key].label,
-    value: overview.buckets[key].allocated,
-  }));
+/** `store` is only for tests and previews; the app uses the shared, localStorage-backed store. */
+export default function App({ store }: { store?: FinanceStore }) {
+  const finance = useFinanceStore(store);
+  const [route, setRoute] = useState<Route>('home');
+  const [lastTab, setLastTab] = useState<Tab>('home');
 
-  const handleImport = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    const result = await store.importFromFile(file);
-    setMessage(
-      result.ok
-        ? `Imported ${result.value.transactions} transactions, ${result.value.bills} bills, ${result.value.vaults} vaults.`
-        : `Import failed: ${result.errors.join('; ')}`,
-    );
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [route]);
+
+  const goTo = (tab: Tab): void => {
+    setLastTab(tab);
+    setRoute(tab);
   };
 
   return (
-    <main className="mx-auto min-h-screen max-w-md space-y-4 bg-slate-950 p-4 text-slate-100">
-      <header className="flex items-center gap-2">
-        <Wallet className="h-6 w-6 text-emerald-400" aria-hidden />
-        <h1 className="text-xl font-semibold">Micro Finance</h1>
-      </header>
-
-      {(storageError ?? message) && (
-        <p role="status" className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-sm text-amber-300">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          {storageError ?? message}
-        </p>
-      )}
-
-      <section className="rounded-2xl bg-slate-900 p-4">
-        <label className="block text-sm text-slate-400" htmlFor="salary">
-          Monthly salary
-        </label>
-        <input
-          id="salary"
-          type="number"
-          min={0}
-          inputMode="decimal"
-          value={salary.monthlySalary}
-          onChange={(event) => store.updateSalary({ monthlySalary: Number(event.target.value) })}
-          className="mt-1 w-full rounded-lg bg-slate-800 px-3 py-2 text-lg outline-none focus:ring-2 focus:ring-emerald-500"
-        />
-        <p className="mt-2 text-sm text-slate-400">
-          Pay period {overview.period.startDate} to {overview.period.endDate} · {overview.period.daysRemaining} days left
-        </p>
-      </section>
-
-      <section className="rounded-2xl bg-slate-900 p-4">
-        <div className="h-48">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={chartData}
-                dataKey="value"
-                nameKey="name"
-                innerRadius={50}
-                outerRadius={80}
-                stroke="none"
-                isAnimationActive={false}
-              >
-                {chartData.map((slice) => (
-                  <Cell key={slice.key} fill={BUCKET_STYLE[slice.key].color} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <ul className="mt-2 space-y-3">
-          {BUCKET_KEYS.map((key) => {
-            const bucket = overview.buckets[key];
-            return (
-              <li key={key}>
-                <div className="flex justify-between text-sm">
-                  <span>{BUCKET_STYLE[key].label} ({salary.allocation[key]}%)</span>
-                  <span className="text-slate-400">
-                    {formatMoney(bucket.spent)} / {formatMoney(bucket.allocated)}
-                  </span>
-                </div>
-                <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-800">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${Math.min(100, bucket.percentUsed)}%`, backgroundColor: BUCKET_STYLE[key].color }}
-                  />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-        <p className="mt-4 text-sm text-slate-400">
-          Safe to spend: <span className="font-medium text-slate-100">{formatMoney(overview.safeToSpend.perDay)}</span> per day
-        </p>
-      </section>
-
-      <section className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => store.downloadBackup()}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700"
+    <div className="relative min-h-dvh text-slate-100">
+      <AmbientGlow />
+      <div className="mx-auto max-w-md">
+        <main
+          key={route}
+          className={cx('animate-fade-in', HAS_FAB.has(route) ? 'pb-[calc(11rem+env(safe-area-inset-bottom))]' : 'pb-[calc(6.5rem+env(safe-area-inset-bottom))]')}
         >
-          <Download className="h-4 w-4" aria-hidden /> Export
-        </button>
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700"
-        >
-          <Upload className="h-4 w-4" aria-hidden /> Import
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            if (window.confirm('Erase all data on this device?')) store.resetAll();
-          }}
-          className="flex items-center justify-center rounded-lg bg-slate-800 px-3 py-2 text-sm text-red-400 hover:bg-slate-700"
-          aria-label="Reset all data"
-        >
-          <RotateCcw className="h-4 w-4" aria-hidden />
-        </button>
-        <input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={handleImport} />
-      </section>
-    </main>
+          {route === 'home' && <HomeScreen finance={finance} goTo={goTo} openSettings={() => setRoute('settings')} />}
+          {route === 'activity' && <ActivityScreen finance={finance} />}
+          {route === 'budget' && <BudgetScreen finance={finance} />}
+          {route === 'bills' && <BillsScreen finance={finance} />}
+          {route === 'vaults' && <VaultsScreen finance={finance} />}
+          {route === 'settings' && <SettingsScreen finance={finance} onBack={() => setRoute(lastTab)} />}
+        </main>
+      </div>
+      <BottomNav active={route === 'settings' ? null : route} onChange={goTo} />
+    </div>
   );
 }

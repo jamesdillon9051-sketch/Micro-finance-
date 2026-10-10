@@ -67,3 +67,15 @@ export function dayInMonth(dayOfMonth: number, year: number, monthIndex: number)
   const m = firstOfMonth.getMonth();
   return new Date(y, m, Math.min(dayOfMonth, daysInMonth(y, m)));
 }
+
+/** The next date (today included) on which `dayOfMonth` occurs, clamped to short months. */
+export function nextOccurrence(dayOfMonth: number, today: Date): Date {
+  const start = startOfDay(today);
+  const thisMonth = dayInMonth(dayOfMonth, start.getFullYear(), start.getMonth());
+  return thisMonth >= start ? thisMonth : dayInMonth(dayOfMonth, start.getFullYear(), start.getMonth() + 1);
+}
+
+/** Same day-of-month `months` later, clamped to the target month's last day. */
+export function addMonths(date: Date, months: number): Date {
+  return dayInMonth(date.getDate(), date.getFullYear(), date.getMonth() + months);
+}

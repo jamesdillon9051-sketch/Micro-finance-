@@ -1,15 +1,10 @@
 import {
-  BUCKET_KEYS,
   CATEGORY_BUCKET,
   INCOME_CATEGORIES,
   type BillReminder,
-  type BucketKey,
-  type BucketSummary,
-  type BudgetOverview,
   type BudgetPeriod,
   type DateKey,
   type ExpenseCategory,
-  type FinanceData,
   type IncomeCategory,
   type Transaction,
 } from '../types';
@@ -63,60 +58,6 @@ export function getBudgetPeriod(paydayDate: number, today: Date): BudgetPeriod {
   };
 }
 
-/**
- * Per-bucket spending for the current pay period plus the safe-to-spend figure.
- * Only expenses dated inside the period count. Salary-based allocation is used
- * (not actual income), and the rollover preference is not applied here.
- */
-export function summarizeBudget(
-  data: Pick<FinanceData, 'salary' | 'transactions'>,
-  today: Date,
-): BudgetOverview {
-  const { salary, transactions } = data;
-  const period = getBudgetPeriod(salary.paydayDate, today);
-
-  const spent: Record<BucketKey, number> = { needs: 0, wants: 0, savings: 0 };
-  let periodIncome = 0;
-  let periodExpenses = 0;
-
-  for (const tx of transactions) {
-    // DateKeys are zero-padded, so string comparison is chronological.
-    if (tx.date < period.startDate || tx.date > period.endDate) continue;
-    if (tx.type === 'income') {
-      periodIncome += tx.amount;
-      continue;
-    }
-    periodExpenses += tx.amount;
-    // Validated data always pairs an expense with an expense category.
-    if (isExpenseCategory(tx.category)) spent[CATEGORY_BUCKET[tx.category]] += tx.amount;
-  }
-
-  const buckets = {} as Record<BucketKey, BucketSummary>;
-  for (const bucket of BUCKET_KEYS) {
-    const allocated = roundMoney((salary.monthlySalary * salary.allocation[bucket]) / 100);
-    const bucketSpent = roundMoney(spent[bucket]);
-    buckets[bucket] = {
-      bucket,
-      allocated,
-      spent: bucketSpent,
-      remaining: roundMoney(allocated - bucketSpent),
-      percentUsed: allocated > 0 ? (bucketSpent / allocated) * 100 : bucketSpent > 0 ? 100 : 0,
-    };
-  }
-
-  const remaining = roundMoney(buckets.needs.remaining + buckets.wants.remaining);
-  return {
-    period,
-    buckets,
-    periodIncome: roundMoney(periodIncome),
-    periodExpenses: roundMoney(periodExpenses),
-    safeToSpend: {
-      remaining,
-      perDay: roundMoney(remaining / Math.max(1, period.daysRemaining)),
-    },
-  };
-}
-
 /** Deterministic id, so a bill can never be auto-deducted twice for the same month. */
 export function autoDeductTransactionId(billId: string, monthKey: string): string {
   return `bill-${billId}-${monthKey}`;
@@ -161,4 +102,12 @@ export function getDueAutoDeductions(
     }
   }
   return due;
+}
+
+/** Newest first; transactions on the same day keep "most recently added first". */
+export function sortNewestFirst(transactions: readonly Transaction[]): Transaction[] {
+  return transactions
+    .map((tx, index) => ({ tx, index }))
+    .sort((a, b) => (a.tx.date === b.tx.date ? b.index - a.index : a.tx.date < b.tx.date ? 1 : -1))
+    .map(({ tx }) => tx);
 }

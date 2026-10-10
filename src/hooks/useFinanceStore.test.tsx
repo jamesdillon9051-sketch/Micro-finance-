@@ -329,6 +329,103 @@ describe('maintenance', () => {
   });
 });
 
+// -- Weekly budget engine through the store ------------------------------------
+
+describe('weekly rollover', () => {
+  /** Oct 2026: 3,100 salary -> needs 350/week, wants 210/week. */
+  function engineSetup(preference: 'none' | 'carry-forward' | 'move-to-savings') {
+    const ctx = setup(at(2026, 10, 10));
+    ctx.store.actions.updateSalary({ monthlySalary: 3100, paydayDate: 1 });
+    const vault = ctx.store.actions.addVault({ ...holiday, currentAmount: 100 });
+    if (!vault.ok) throw new Error('vault failed');
+    const result = ctx.store.actions.updateSalary({
+      rolloverPreference: preference,
+      rolloverVaultId: preference === 'move-to-savings' ? vault.value.id : null,
+    });
+    if (!result.ok) throw new Error(result.errors.join());
+    return { ...ctx, vaultId: vault.value.id };
+  }
+
+  it('carries last week\'s surplus into this week\'s cap when the week rolls over', () => {
+    const { clock, store } = engineSetup('carry-forward');
+    store.actions.addTransaction({ ...expense, amount: 100, date: '2026-10-10' }); // needs, week 2
+
+    clock.set(at(2026, 10, 14));
+    store.runMaintenance();
+    expect(store.getSnapshot().data.rollovers).toEqual([]); // week 2 has not finished yet
+
+    clock.set(at(2026, 10, 15));
+    store.runMaintenance();
+    const { rollovers } = store.getSnapshot().data;
+    expect(rollovers.map((r) => [r.bucket, r.amount, r.action])).toEqual([
+      ['needs', 250, 'carried'],
+      ['wants', 210, 'carried'],
+    ]);
+    store.runMaintenance(); // running again changes nothing
+    expect(store.getSnapshot().data.rollovers).toHaveLength(2);
+  });
+
+  it('moves the surplus into the chosen vault exactly once', () => {
+    const { clock, store, vaultId } = engineSetup('move-to-savings');
+    clock.set(at(2026, 10, 15));
+    store.runMaintenance();
+    store.runMaintenance();
+    const vault = store.getSnapshot().data.vaults.find((v) => v.id === vaultId);
+    expect(vault?.currentAmount).toBe(100 + 350 + 210);
+    expect(store.getSnapshot().data.rollovers.every((r) => r.action === 'moved' && r.vaultId === vaultId)).toBe(true);
+  });
+
+  it('does nothing with the "none" preference', () => {
+    const { clock, store } = engineSetup('none');
+    clock.set(at(2026, 10, 22));
+    store.runMaintenance();
+    expect(store.getSnapshot().data.rollovers).toEqual([]);
+    expect(store.getSnapshot().data.vaults[0]?.currentAmount).toBe(100);
+  });
+
+  it('settles on startup too, after the app was closed for a few weeks', () => {
+    const { clock, make } = engineSetup('carry-forward');
+    clock.set(at(2026, 10, 29)); // weeks 2, 3 and 4 finished while closed
+    const reopened = make();
+    expect(reopened.getSnapshot().data.rollovers.filter((r) => r.bucket === 'needs').map((r) => r.amount)).toEqual([
+      350, 700, 1050,
+    ]);
+  });
+
+  it('keeps the rollover target valid', () => {
+    const { store, vaultId } = engineSetup('move-to-savings');
+    expect(store.actions.updateSalary({ rolloverVaultId: 'nope' })).toMatchObject({ ok: false });
+    expect(store.actions.deleteVault(vaultId)).toBe(true);
+    expect(store.getSnapshot().data.salary.rolloverVaultId).toBeNull();
+    expect(store.actions.deleteVault(vaultId)).toBe(false);
+  });
+
+  it('survives export and import, including the ledger', () => {
+    const source = engineSetup('carry-forward');
+    source.clock.set(at(2026, 10, 15));
+    source.store.runMaintenance();
+    const json = source.store.actions.exportToJson();
+
+    const target = setup(at(2026, 10, 15));
+    expect(target.store.actions.importFromJson(json).ok).toBe(true);
+    expect(target.store.getSnapshot().data.rollovers).toEqual(source.store.getSnapshot().data.rollovers);
+    expect(target.store.getSnapshot().data.salary).toEqual(source.store.getSnapshot().data.salary);
+  });
+
+  it('imports a backup made before weekly rollover existed', () => {
+    const source = setup();
+    const legacy = JSON.parse(source.store.actions.exportToJson());
+    delete legacy.data.rollovers;
+    delete legacy.data.salary.rolloverVaultId;
+    delete legacy.data.meta.lastSettledThrough;
+
+    const target = setup();
+    expect(target.store.actions.importFromJson(JSON.stringify(legacy)).ok).toBe(true);
+    expect(target.store.getSnapshot().data.salary.rolloverVaultId).toBeNull();
+    expect(target.store.getSnapshot().data.rollovers).toEqual([]);
+  });
+});
+
 // -- Cross-tab sync -----------------------------------------------------------
 
 describe('syncFromStorage', () => {
@@ -375,6 +472,24 @@ describe('useFinanceStore', () => {
     });
     expect(result.current.transactions).toHaveLength(1);
     expect(result.current.overview.buckets.needs).toMatchObject({ spent: 250, remaining: 750 });
+  });
+
+  it('exposes this week\'s caps and the daily safe-to-spend, and updates them live', () => {
+    const { store } = setup(at(2026, 10, 10)); // week 2 of Oct, 5 days left
+    const { result } = renderHook(() => useFinanceStore(store));
+    expect(result.current.overview.safeToSpend.perDay).toBe(0);
+
+    act(() => {
+      result.current.updateSalary({ monthlySalary: 3100 });
+    });
+    // (350 + 210) / 5 days
+    expect(result.current.overview.safeToSpend).toEqual({ remaining: 560, daysRemaining: 5, perDay: 112 });
+
+    act(() => {
+      result.current.addTransaction({ ...expense, amount: 60, date: '2026-10-10' });
+    });
+    expect(result.current.overview.safeToSpend.perDay).toBe(100);
+    expect(result.current.overview.weekly.buckets.needs).toMatchObject({ cap: 350, spent: 60, remaining: 290 });
   });
 
   it('shares one state between every component that uses it', () => {

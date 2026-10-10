@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { getDueAutoDeductions, roundMoney, summarizeBudget } from '../lib/budget';
+import { getDueAutoDeductions, roundMoney } from '../lib/budget';
 import { fromDateKey, toDateKey, toMonthKey } from '../lib/dates';
+import { settleCompletedWeeks, summarizeBudget } from '../lib/engine';
 import {
   backupFileName,
   buildSettingsExport,
@@ -20,6 +21,7 @@ import type {
   ImportSummary,
   NotificationSettings,
   Result,
+  RolloverRecord,
   SalaryConfig,
   SavingsVault,
   Transaction,
@@ -54,6 +56,10 @@ export type NotificationPatch = Partial<NotificationSettings>;
  * `{ ok: false, errors }` and leaves the state and storage untouched.
  */
 export interface FinanceActions {
+  /**
+   * Edits salary, payday, bucket percentages (which must total 100), rollover preference
+   * and the rollover vault. The weekly caps and safe-to-spend recalculate immediately.
+   */
   updateSalary(patch: SalaryPatch): Result<SalaryConfig>;
 
   addTransaction(input: NewTransaction): Result<Transaction>;
@@ -69,6 +75,7 @@ export interface FinanceActions {
   updateVault(id: string, patch: VaultPatch): Result<SavingsVault>;
   /** Adds (positive) or withdraws (negative) money. A withdrawal larger than the balance is rejected. */
   adjustVaultBalance(id: string, delta: number): Result<SavingsVault>;
+  /** Returns whether the vault existed. If it was the rollover destination, that setting is cleared. */
   deleteVault(id: string): boolean;
 
   updateNotifications(patch: NotificationPatch): Result<NotificationSettings>;
@@ -256,7 +263,9 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
         meta: { ...next.meta, lastAutoDeductDate: todayKey },
       };
     }
-    return next;
+
+    // Settle the surplus of finished weeks. This runs last so auto-deducted bills already count as spending.
+    return settleCompletedWeeks(next, today);
   }
 
   // -- Initial state --------------------------------------------------------
@@ -351,6 +360,10 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
     updateSalary(patch) {
       const parsed = parseSalaryConfig({ ...snapshot.data.salary, ...patch });
       if (!parsed.ok) return parsed;
+      const { rolloverVaultId } = parsed.value;
+      if (rolloverVaultId !== null && !snapshot.data.vaults.some((vault) => vault.id === rolloverVaultId)) {
+        return { ok: false, errors: ['The chosen savings vault no longer exists'] };
+      }
       setData({ ...snapshot.data, salary: parsed.value });
       return parsed;
     },
@@ -365,7 +378,17 @@ export function createFinanceStore(options: FinanceStoreOptions = {}): FinanceSt
 
     addVault: vaults.add,
     updateVault: vaults.update,
-    deleteVault: vaults.remove,
+    deleteVault(id) {
+      const data = snapshot.data;
+      if (!data.vaults.some((vault) => vault.id === id)) return false;
+      setData({
+        ...data,
+        vaults: data.vaults.filter((vault) => vault.id !== id),
+        // Never leave the rollover pointing at a vault that no longer exists.
+        salary: data.salary.rolloverVaultId === id ? { ...data.salary, rolloverVaultId: null } : data.salary,
+      });
+      return true;
+    },
     adjustVaultBalance(id, delta) {
       const vault = snapshot.data.vaults.find((item) => item.id === id);
       if (!vault) return notFound(id);
@@ -462,8 +485,12 @@ export interface FinanceState {
   bills: BillReminder[];
   vaults: SavingsVault[];
   notifications: NotificationSettings;
-  /** Current pay period, bucket spending and safe-to-spend, recalculated when the data or the day changes. */
+  /** History of weekly surplus that was carried forward or moved to a vault, oldest first. */
+  rollovers: RolloverRecord[];
+  /** Pay-period totals, this week's caps and today's safe-to-spend; recalculated when the data or the day changes. */
   overview: BudgetOverview;
+  /** Today's local date; updates when the day rolls over so screens never show a stale "today". */
+  today: DateKey;
   storageError: string | null;
 }
 
@@ -504,11 +531,22 @@ export function useFinanceStore(store: FinanceStore = getDefaultFinanceStore()):
     };
   }, [store]);
 
-  const { salary, transactions, bills, vaults, notifications } = data;
+  const { salary, transactions, bills, vaults, notifications, rollovers } = data;
   const overview = useMemo(
-    () => summarizeBudget({ salary, transactions }, fromDateKey(todayKey)),
-    [salary, transactions, todayKey],
+    () => summarizeBudget({ salary, transactions, rollovers }, fromDateKey(todayKey)),
+    [salary, transactions, rollovers, todayKey],
   );
 
-  return { salary, transactions, bills, vaults, notifications, overview, storageError, ...store.actions };
+  return {
+    salary,
+    transactions,
+    bills,
+    vaults,
+    notifications,
+    rollovers,
+    overview,
+    today: todayKey,
+    storageError,
+    ...store.actions,
+  };
 }

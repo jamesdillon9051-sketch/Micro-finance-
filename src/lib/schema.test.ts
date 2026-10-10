@@ -86,7 +86,7 @@ describe('settings document', () => {
     const data = JSON.parse(JSON.stringify(fullData())) as Record<string, unknown>;
     delete data['meta'];
     const result = parseSettingsExport(doc(data), NOW);
-    expect(result.ok && result.value.meta).toEqual({ billsMonth: '2026-10', lastAutoDeductDate: null });
+    expect(result.ok && result.value.meta).toEqual({ billsMonth: '2026-10', lastAutoDeductDate: null, lastSettledThrough: null });
   });
 
   it('requires every other section', () => {
@@ -119,6 +119,49 @@ describe('settings document', () => {
     const data = { ...fullData(), transactions: Array.from({ length: 200 }, () => 'junk') };
     const errors = errorsOf(doc(data));
     expect(errors.length).toBeLessThanOrEqual(26);
+  });
+});
+
+describe('weekly rollover fields', () => {
+  it('rejects a rollover vault that is not in the backup', () => {
+    const data = JSON.parse(JSON.stringify(fullData()));
+    data.salary.rolloverVaultId = 'ghost';
+    expect(errorsOf(doc(data))[0]).toContain('rolloverVaultId');
+    data.salary.rolloverVaultId = vault.id;
+    expect(parseSettingsExport(doc(data), NOW).ok).toBe(true);
+  });
+
+  it('defaults the new fields when an older backup lacks them', () => {
+    const data = JSON.parse(JSON.stringify(fullData()));
+    delete data.rollovers;
+    delete data.salary.rolloverVaultId;
+    delete data.meta.lastSettledThrough;
+    const result = parseSettingsExport(doc(data), NOW);
+    expect(result.ok && [result.value.rollovers, result.value.salary.rolloverVaultId, result.value.meta.lastSettledThrough]).toEqual([
+      [],
+      null,
+      null,
+    ]);
+  });
+
+  it('validates ledger records', () => {
+    const record = {
+      id: '2026-10-01:needs',
+      weekStart: '2026-10-01',
+      weekEnd: '2026-10-07',
+      bucket: 'needs',
+      amount: 12.5,
+      action: 'carried',
+      vaultId: null,
+      settledOn: '2026-10-08',
+    };
+    const withRecords = (...records: unknown[]) => doc({ ...JSON.parse(JSON.stringify(fullData())), rollovers: records });
+    expect(parseSettingsExport(withRecords(record), NOW).ok).toBe(true);
+    expect(errorsOf(withRecords({ ...record, bucket: 'savings' }))[0]).toContain('bucket');
+    expect(errorsOf(withRecords({ ...record, amount: 0 }))[0]).toContain('amount');
+    expect(errorsOf(withRecords({ ...record, weekEnd: '2026-09-30' }))[0]).toContain('weekEnd');
+    expect(errorsOf(withRecords({ ...record, action: 'moved', vaultId: null }))[0]).toContain('vaultId');
+    expect(errorsOf(withRecords(record, { ...record }))[0]).toContain('used more than once');
   });
 });
 
